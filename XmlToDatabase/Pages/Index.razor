@@ -1,0 +1,23 @@
+﻿@page "/"
+
+Hello
+<MudProgressLinear Color="Color.Tertiary" Size="Size.Large" Value="_value" Class="my-7" />
+
+<MudButton Variant="Variant.Filled" Color="Color.Primary" >Button</MudButton>
+Hello
+
+@code {
+  int _value = 0;
+
+  async Task SimulateProgress()
+  {
+      do
+      {
+            _value += 4;
+            this.StateHasChanged();
+            await Task.Delay(500);
+      } while(_value < 100);
+  }  
+
+  protected override async void OnInitialized() => await SimulateProgress();
+}

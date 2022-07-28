@@ -1,0 +1,240 @@
+﻿@page "/XmlRead"
+
+@using System.Xml
+@using System 
+@using System.IO
+@using Microsoft.AspNetCore.Hosting
+@using Microsoft.Extensions.Logging
+
+@inject IWebHostEnvironment Environment
+@inject BankContext db
+
+<PageTitle>XmlRead</PageTitle>
+
+<InputFile id="fileInput" OnChange="UploadFiles" hidden accept=".xml" />
+
+<div>
+	<MudButton HtmlTag="label"
+			Variant="Variant.Filled"
+			Color="Color.Primary"
+			StartIcon="@Icons.Filled.CloudUpload"
+			for="fileInput">
+		Upload File
+	</MudButton>
+	
+	@if (file != null)
+	{
+		<MudText Typo="@Typo.h6">@file.Name <code>@file.Size bytes</code></MudText>
+	}
+</div>
+<br/>
+<br/>
+
+<div>
+	<MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="OnReadButton">Read Xml</MudButton>
+</div>
+<br/>
+
+<div>
+	<MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="OnCancleButton">Abbrechen</MudButton>
+</div>
+<br/>
+<br/>
+
+@if (isReading == true)
+{
+	<div>
+		<MudText Typo="@Typo.h4">Reading ...</MudText>
+		<MudProgressLinear Color="Color.Tertiary" Size="Size.Large" Min="0" Max="nbOfNtries" Value="currNtrys" />
+	</div>
+}
+@if (nbOfNtries == currNtrys)
+{
+	<div>
+		<MudText Typo="@Typo.h4">Reading Done</MudText>
+	</div>
+}
+
+<!--
+	To DoDo
+
+	Xml:
+		xml file NtryRef non unique
+-->
+
+
+@code {
+
+	Entry en = new Entry();
+
+	IBrowserFile file;
+
+	bool isReading = false;
+
+	string ntryref = "", amt = "", dt = "", nm = "", iban = "", refr = "", addtlntryinf = "";
+
+	int currNtrys = 0;
+	int nbOfNtries = 1;
+
+	List<string> ntryList = new List<string>();
+
+	XmlReaderSettings settings = new XmlReaderSettings();
+
+	async void UploadFiles(InputFileChangeEventArgs e)
+	{
+		currNtrys = 0;
+		foreach (var uploadfile in e.GetMultipleFiles())
+		{
+			file = uploadfile;
+		}
+
+
+		var path = Path.Combine(Environment.ContentRootPath,
+				Environment.EnvironmentName, "unsafe_uploads",
+				"upload");			
+
+
+		using FileStream fs = new(path, FileMode.Create);
+		await file.OpenReadStream(1000000).CopyToAsync(fs);
+		fs.Close();
+	}
+
+	void WriteToConsole(string ntryref = "", string amt = "", string dt = "", string nm = "", string iban = "", string refr = "", string addtlntryinf = "")
+	{
+		Console.WriteLine($"Entry : {currNtrys}");
+		Console.WriteLine($"Id : {ntryref}");
+		Console.WriteLine($"Betrag : {amt}");
+		Console.WriteLine($"Datum : {dt}");
+		Console.WriteLine($"Name : {nm}");
+		Console.WriteLine($"IBAN : {iban}");
+		Console.WriteLine($"Referenz : {refr}");
+		Console.WriteLine($"Info : {addtlntryinf}\n\n");
+	}
+
+	void WriteToDb(string ntryref = "", string amt = "", string dt = "", string nm = "", string iban = "", string refr = "", string addtlntryinf = "")
+	{
+		en = new Entry();
+
+		en.Id = ntryref;
+		en.Betrag = amt;
+		en.Datum = dt;
+		en.Name = nm;
+		en.IBAN = iban;
+		en.Referenz = refr;
+		en.Info = addtlntryinf;
+
+		db.Add(en);
+		db.SaveChanges();
+	}
+
+	void createNtryList()
+	{
+		List<Entry> list = db.Entries.FromSqlRaw<Entry>("SELECT * FROM dbo.Entries").ToList();
+
+		foreach(Entry en in list)
+		{
+			ntryList.Add(en.Info);
+		}
+	}
+
+	bool checkForRepeat(string addtlntryinf)
+	{
+		return ntryList.Contains(addtlntryinf);
+	}
+
+	async Task ReadFromXml()
+	{
+		settings.Async = true;
+		XmlReader reader = XmlReader.Create(Path.Combine(Environment.ContentRootPath,Environment.EnvironmentName, "unsafe_uploads","upload"), settings);
+
+
+
+		// sollten die xml files nicht immer das gleiche format haben muss dass villeicht ein bisschen umgeschrieben werden
+		reader.ReadToFollowing("NbOfNtries");
+		nbOfNtries = Int32.Parse(await reader.ReadElementContentAsStringAsync());
+		reader.ReadToFollowing("NbOfNtries");
+		nbOfNtries += Int32.Parse(await reader.ReadElementContentAsStringAsync());
+
+
+
+		while (isReading == true && reader.EOF != true)
+		{
+			switch (reader.NodeType)
+			{
+				case XmlNodeType.Element when reader.Name == "Ntry":
+					currNtrys++;
+					StateHasChanged();
+					await reader.ReadAsync();
+					break;
+
+				case XmlNodeType.Element when reader.Name == "NtryRef":
+					ntryref = await reader.ReadElementContentAsStringAsync();
+					break;
+
+				case XmlNodeType.Element when reader.Name == "Amt":
+					amt = await reader.ReadElementContentAsStringAsync();
+					break;
+
+				case XmlNodeType.Element when reader.Name == "BookgDt" && reader.ReadToFollowing("Dt"):
+					dt = await reader.ReadElementContentAsStringAsync();
+					break;
+
+				case XmlNodeType.Element when reader.Name == "Dbtr" && reader.ReadToFollowing("Nm"):
+					nm = await reader.ReadElementContentAsStringAsync();
+					break;
+
+				case XmlNodeType.Element when reader.Name == "DbtrAcct" && reader.ReadToFollowing("IBAN"):
+					iban = await reader.ReadElementContentAsStringAsync();
+					break;
+
+				case XmlNodeType.Element when reader.Name == "Ref":
+					refr = await reader.ReadElementContentAsStringAsync();
+					break;
+
+				case XmlNodeType.Element when reader.Name == "AddtlNtryInf":
+					addtlntryinf = await reader.ReadElementContentAsStringAsync();
+					if (checkForRepeat(addtlntryinf)) reader.ReadToFollowing("Ntry");
+					break;
+
+				case XmlNodeType.EndElement when reader.Name == "Ntry":
+					//WriteToConsole(ntryref, amt, dt, nm, iban, refr, addtlntryinf);
+					WriteToDb(ntryref, amt, dt, nm, iban, refr, addtlntryinf);
+					await reader.ReadAsync();
+					break;
+
+				default:
+					await reader.ReadAsync();
+					break;
+			}
+		}
+
+		reader.Close();
+		reader.Dispose();
+	}
+
+	async void OnReadButton()
+	{
+		//Console.WriteLine("Reading started");
+
+		createNtryList();
+		currNtrys = 0;	
+
+		isReading = true;
+		await Task.Delay(1);
+		StateHasChanged();
+
+		await ReadFromXml();
+
+		isReading = false;
+		await Task.Delay(1);
+		StateHasChanged();
+
+		//Console.WriteLine("Reading stopped");
+	}
+
+	void OnCancleButton()
+	{
+		//Console.WriteLine("Reading stopped");
+		isReading = false;
+	}
+}
